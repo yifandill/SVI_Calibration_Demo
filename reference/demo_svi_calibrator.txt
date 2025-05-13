@@ -1,0 +1,73 @@
+import math
+
+from scipy.optimize import differential_evolution
+
+def get_total_var_from_svi(a, b, rho, m, sigma, k):
+    """
+    Calculate the total variance from the SVI parameters.
+    :param a: SVI parameter a
+    :param b: SVI parameter b
+    :param rho: SVI parameter rho
+    :param m: SVI parameter m
+    :param sigma: SVI parameter sigma
+    :param k: Strike price
+    :return: Total variance
+    """
+    return a + b * (rho * (k - m) + math.sqrt((k - m) ** 2 + sigma ** 2))
+
+
+def calibrate_svi(self, target: List[Tuple[float, float]], calib_param: List[str] = None,
+                  non_calib_param: Dict[str, float] = None, bounds: List[float] = None, inplace=True):
+    param_name = ['a', 'b', 'rho', 'm', 'sigma']
+    calib_param_list = calib_param or param_name
+    if bounds is not None:
+        calib_bound = dict(zip(calib_param_list, bounds))
+    else:
+        calib_bound = {
+            'a': (1e-8, 99),
+            'b': (1e-4, 99),
+            'rho': (-1 + 1e-8, 1 - 1e-8),
+            'm': (-99, 99),
+            'sigma': (1e-8, 99)
+        }
+    guess_calc = [max(min(getattr(self.svi_param, n), calib_bound[n][1] - 1e-8), calib_bound[n][0] + 1e-8) for n in
+                  calib_param_list]
+    bounds = [calib_bound[n] for n in calib_param_list]
+
+    slice_list = []
+    for strike, v_mid in target:
+        var_mid = v_mid * v_mid * self.expiry
+        error_scale = math.exp(-abs(strike))
+        slice_list.append((strike, var_mid, error_scale))
+
+    if set(calib_param_list) != set(param_name):
+        non_calib_param_dict = {n: non_calib_param.get(n, getattr(self.svi_param, n)) for n in param_name if
+                                n not in calib_param}
+    else:
+        non_calib_param_dict = {}
+
+    if len(non_calib_param_dict) == 0:
+        def error_func(x):
+            error = 0
+            for k, vm, s in slice_list:
+                var = get_total_var_from_svi(a=x[0], b=x[1], rho=x[2], m=x[3], sigma=x[4], k=k)
+                error += (var - vm) * (var - vm) * s
+            return error
+    else:
+        def error_func(x):
+            error = 0
+            calib_p = {**dict(zip(calib_param, x)), **non_calib_param_dict}
+            for k, vm, s in slice_list:
+                var = get_total_var_from_svi(a=calib_p['a'], b=calib_p['b'], rho=calib_p['rho'], m=calib_p['m'],
+                                                     sigma=calib_p['sigma'], k=k)
+                error += (var - vm) * (var - vm) * s
+            return error
+
+    calib_result = differential_evolution(error_func, bounds=bounds, x0=guess_calc)
+    calib_result_dict = {n: v for n, v in zip(calib_param_list, calib_result.x)}
+    if inplace:
+        for n, v in calib_result_dict.items():
+            setattr(self.svi_param, n, v)
+        self.param = self.svi_param.to_jwsvi(self.expiry)
+    else:
+        return {**calib_result_dict, **non_calib_param_dict}
