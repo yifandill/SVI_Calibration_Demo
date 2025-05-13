@@ -1,0 +1,7 @@
+Due to memory size limit for submission. I emptied the results file which originally contained all the plots (for fitting, residuals and SVI surface) and metrics data.
+
+You could refer to src/Test_2025-04-08.ipynb to see the demo results.
+
+Also, just click to run the src/workflow.py file, you will be able to attain all the results files in the results directory.
+
+More details can be seen in README file.
